@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html>
+<!--
+  fractgl v0.1
+  (c) 2017 Brian Nenninger
+  Released under the GNU General Public License version 3.
+-->
+<head>
+    <script src="vue_2.3.4.min.js"></script>
+    <style>
+        html {
+            box-sizing: border-box;
+            font-family: Arial, Helvetica, sans-serif;
+        }
+        *, *:before, *:after {
+            box-sizing: inherit;
+        }
+        body {
+            margin: 0;
+        }
+        input[type="text"], input[type="number"] {
+            font-size: 14px;
+        }
+        input[type="number"] {
+            width: 70px;
+        }
+        input[type="range"] {
+            width: 100%;
+        }
+
+        #main {
+            display: flex;
+        }
+        .controls {
+            width: 300px;
+            background: #aaa;
+            height: 100vh;
+            padding: 10px;
+            overflow-y: auto;
+            border-right: 1px solid #ccc;
+        }
+        .control-row {
+            display: flex;
+            min-height: 24px;
+            align-items: center;
+            margin: 10px 0;
+        }
+        .control-row > * {
+            margin-left: 5px;
+        }
+        .control-row input.full-width {
+            flex:  1;
+        }
+        .animation-playback {
+            text-align: center;
+        }
+        .fractal-canvas {
+            flex: 1;
+            background: black;
+            height: 100vh;
+            overflow-y: auto;
+        }
+        .fractal-canvas canvas {
+            cursor: pointer;
+        }
+
+        .debug-info {
+            color: white;
+            margin: 20px 0 0 10px;
+            font-size: 14px;
+        }
+    </style>
+
+    <script src="fractal.js"></script>
+
+</head>
+
+<body>
+    <div id="main">
+        <div class="controls">
+            <div class="control-row">
+                <label>Preset</label>
+                <select v-model="selectedPresetName" @change="selectPreset()">
+                    <option disabled selected value="">Select...</option>
+                    <option v-for="preset in presets">{{preset.name}}</option>
+                </select>
+                <button v-if="selectedPresetName" @click="selectPreset()">Reset</button>
+            </div>
+
+            <div class="control-row">
+                <label>Size</label>
+                <input type="number" step="1" v-model.number.lazy="fractalSize" @change="updateFractalSize()" />
+                <label v-if="isHighDpiDisplay">
+                    <input type="checkbox" v-model="useHighDpi" @change="updateDpi()" />
+                    High DPI
+                </label>
+            </div>
+
+            <div class="control-row">
+                <label>Fractal type</label>
+                <select v-model="fractalParams.fractalType" @change="redrawNextTick()">
+                    <option value="mandelbrot">Mandelbrot</option>
+                    <option value="julia">Julia</option>
+                </select>
+            </div>
+
+            <div class="control-row">
+                <label>Center</label>
+                <fract-complex-number class="full-width" v-model="fractalParams.bounds.center"
+                    @input="redrawNextTick()"></fract-complex-number>
+            </div>
+
+            <div class="control-row">
+                <label>Radius</label>
+                <input type="number" step="any" class="full-width" @change="redrawNextTick()"
+                    v-model.number.lazy="fractalParams.bounds.radius" />
+            </div>
+
+            <div class="control-row">
+                <label>Function</label>
+                <fract-expression class="full-width" v-model="fractalParams.expression"
+                    @input="redrawNextTick()"></fract-expression>
+            </div>
+
+            <div class="control-row" v-if="fractalParams.fractalType === 'mandelbrot'">
+                <label>
+                    <input type="checkbox" v-model="overlayJulia" />
+                    Overlay Julia set
+                </label>
+            </div>
+
+            <!-- When using v-if, the v-model binding is not set when children becomes visible. -->
+            <div class="control-row" :style="{display: fractalParams.fractalType === 'julia' ? '': 'none'}">
+                <label>Julia seed</label>
+                <fract-complex-number class="complex-number" v-model="fractalParams.juliaSeed"
+                    @input="redrawNextTick()"></fract-complex-number>
+            </div>
+
+            <hr/>
+
+            <div class="control-row">
+                <label>
+                  <input type="checkbox" v-model="animationEnabled"
+                      @change="toggleAnimationEnabled()" />
+                  Animate
+                </label>
+            </div>
+
+            <div :style="{display: animationEnabled ? '' : 'none'}">
+                <div class="control-row">
+                    <label>Frames</label>
+                    <input type="number" step="1" size="6" v-model.number.lazy="animation.numFrames" />
+                </div>
+
+                <div>
+                    <input type="range" min="0" :max="animation.numFrames"
+                        v-model.number="animation.currentFrame"
+                        @input="redraw()" @change="redraw()" />
+                    <div class="animation-playback">
+                        <button @click="toggleAnimationPlaying()">{{isAnimating ? "Stop" : "Start"}}</button>
+                        <button @click="animation.animationDirection = -animation.animationDirection">Reverse</button>
+                    </div>
+                </div>
+
+                <div class="control-row">
+                    <label>
+                        <input type="checkbox" v-model="animation.animateBounds"
+                            @change="redrawNextTick()" />
+                        Center
+                    </label>
+                    <fract-complex-number class="full-width" v-model="animation.targetFractalParams.bounds.center"
+                        @change="redrawNextTick()"></fract-complex-number>
+                </div>
+
+                <div class="control-row">
+                    <label>
+                        <input type="checkbox" v-model="animation.animateBounds"
+                            @change="redrawNextTick()"/>
+                        Radius
+                    </label>
+                    <input type="text" class="full-width" v-model.number.lazy="animation.targetFractalParams.bounds.radius"
+                         @change="redrawNextTick()" />
+                </div>
+
+                <div class="control-row">
+                    <label>
+                        <input type="checkbox" v-model="animation.animateExpression"
+                            @change="redrawNextTick()" />
+                        Function
+                    </label>
+                    <fract-expression class="full-width" v-model="animation.targetFractalParams.expression"
+                        @input="redrawNextTick()"></fract-expression>
+                </div>
+
+                <div class="control-row" :style="{display: fractalParams.fractalType === 'julia' ? '' : 'none'}">
+                    <label>
+                        <input type="checkbox" v-model="animation.animateJuliaSeed"
+                            @change="redrawNextTick()" />
+                        Julia seed
+                    </label>
+                    <fract-complex-number class="full-width" v-model="animation.targetFractalParams.juliaSeed"
+                         @input="redrawNextTick()"></fract-complex-number>
+                </div>
+            </div>
+
+            <hr/>
+            <div class="control-row">
+                <label>
+                    <input type="checkbox" v-model="showDebugInfo" />
+                    Show debug info
+                </label>
+            </div>
+        </div>
+
+        <div class="fractal-canvas">
+            <canvas id="__canvas"
+                @mousedown="mouseDownOverCanvas($event)"
+                @mouseup="mouseUpOverCanvas($event)"
+                @mousemove="mouseMovedOverCanvas($event)"
+                @mouseleave="mouseExitedCanvas($event)"
+                @wheel="mouseWheelOverCanvas($event)"></canvas>
+            <div class="debug-info" v-if="showDebugInfo && lastDisplayedFractalParams">
+                <div>
+                    {{lastDisplayedFractalParams.fractalType}}
+                </div>
+                <div>
+                    Center: {{lastDisplayedFractalParams.bounds.center.toString()}}
+                </div>
+                <div>
+                    Radius: {{lastDisplayedFractalParams.bounds.radius}}
+                </div>
+                <div>
+                    Function: {{lastDisplayedFractalParams.expression.toString()}}
+                </div>
+                <div v-if="lastDisplayedFractalParams.juliaSeed">
+                    Julia seed: {{lastDisplayedFractalParams.juliaSeed.toString()}}
+                </div>
+                <div>
+                    Frames drawn: {{totalFrames}}
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
