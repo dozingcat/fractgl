@@ -959,6 +959,7 @@ const createApp = () => new Vue({
         try {
             this.fractalSize = parseInt(window.localStorage['fractalSize'], 10);
             this.useHighDpi = !!window.localStorage['useHighDpi'];
+            this.selectedDpiRatio = this.useHighDpi ? this.devicePixelRatio : 1;
         } catch (ignored) {}
         if (!(Number.isFinite(this.fractalSize) && this.fractalSize > 0)) {
             this.fractalSize = 800;
