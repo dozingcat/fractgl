@@ -88,6 +88,13 @@
             </div>
 
             <div class="control-row">
+                <label>Colors</label>
+                <select v-model="selectedColorScheme" @change="redrawAndStoreState()">
+                    <option v-for="scheme in colorSchemes" :value="scheme">{{scheme.name}}</option>
+                </select>
+            </div>
+
+            <div class="control-row">
                 <label>Size</label>
                 <input type="number" step="1" v-model.number.lazy="fractalSize" @change="updateFractalSize()" />
                 <label v-if="isHighDpiDisplay">
@@ -98,7 +105,7 @@
 
             <div class="control-row">
                 <label>Fractal type</label>
-                <select v-model="fractalParams.fractalType" @change="redrawNextTick()">
+                <select v-model="fractalParams.fractalType" @change="redrawAndStoreState()">
                     <option value="mandelbrot">Mandelbrot</option>
                     <option value="julia">Julia</option>
                 </select>
@@ -107,19 +114,19 @@
             <div class="control-row">
                 <label>Center</label>
                 <fract-complex-number class="full-width" v-model="fractalParams.bounds.center"
-                    @input="redrawNextTick()"></fract-complex-number>
+                    @input="redrawAndStoreState()"></fract-complex-number>
             </div>
 
             <div class="control-row">
                 <label>Radius</label>
-                <input type="number" step="any" class="full-width" @change="redrawNextTick()"
+                <input type="number" step="any" class="full-width" @change="redrawAndStoreState()"
                     v-model.number.lazy="fractalParams.bounds.radius" />
             </div>
 
             <div class="control-row">
                 <label>Function</label>
                 <fract-expression class="full-width" v-model="fractalParams.expression"
-                    @input="redrawNextTick()"></fract-expression>
+                    @input="redrawAndStoreState()"></fract-expression>
             </div>
 
             <div class="control-row" v-if="fractalParams.fractalType === 'mandelbrot'">
@@ -133,7 +140,7 @@
             <div class="control-row" :style="{display: fractalParams.fractalType === 'julia' ? '': 'none'}">
                 <label>Julia seed</label>
                 <fract-complex-number class="complex-number" v-model="fractalParams.juliaSeed"
-                    @input="redrawNextTick()"></fract-complex-number>
+                    @input="redrawAndStoreState()"></fract-complex-number>
             </div>
 
             <hr/>
@@ -165,41 +172,41 @@
                 <div class="control-row">
                     <label>
                         <input type="checkbox" v-model="animation.animateBounds"
-                            @change="redrawNextTick()" />
+                            @change="redrawAndStoreState()" />
                         Center
                     </label>
                     <fract-complex-number class="full-width" v-model="animation.targetFractalParams.bounds.center"
-                        @change="redrawNextTick()"></fract-complex-number>
+                        @change="redrawAndStoreState()"></fract-complex-number>
                 </div>
 
                 <div class="control-row">
                     <label>
                         <input type="checkbox" v-model="animation.animateBounds"
-                            @change="redrawNextTick()"/>
+                            @change="redrawAndStoreState()"/>
                         Radius
                     </label>
                     <input type="text" class="full-width" v-model.number.lazy="animation.targetFractalParams.bounds.radius"
-                         @change="redrawNextTick()" />
+                         @change="redrawAndStoreState()" />
                 </div>
 
                 <div class="control-row">
                     <label>
                         <input type="checkbox" v-model="animation.animateExpression"
-                            @change="redrawNextTick()" />
+                            @change="redrawAndStoreState()" />
                         Function
                     </label>
                     <fract-expression class="full-width" v-model="animation.targetFractalParams.expression"
-                        @input="redrawNextTick()"></fract-expression>
+                        @input="redrawAndStoreState()"></fract-expression>
                 </div>
 
                 <div class="control-row" :style="{display: fractalParams.fractalType === 'julia' ? '' : 'none'}">
                     <label>
                         <input type="checkbox" v-model="animation.animateJuliaSeed"
-                            @change="redrawNextTick()" />
+                            @change="redrawAndStoreState()" />
                         Julia seed
                     </label>
                     <fract-complex-number class="full-width" v-model="animation.targetFractalParams.juliaSeed"
-                         @input="redrawNextTick()"></fract-complex-number>
+                         @input="redrawAndStoreState()"></fract-complex-number>
                 </div>
             </div>
 

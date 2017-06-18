@@ -310,7 +310,7 @@ void main() {
 }
 `;
 
-const generateFragmentShaderSource = (expr) => {
+const generateFragmentShaderSource = (expr, colorScheme, overlayColorScheme) => {
     return `
     precision highp float;
     uniform float jx;
@@ -323,30 +323,50 @@ const generateFragmentShaderSource = (expr) => {
     uniform float height;
     uniform bool showMandelbrot;
     uniform bool showJulia;
+    const float maxIters = 255.0;
 
     float juliaIters(float cx, float cy, float jx, float jy) {
         float x = jx;
         float y = jy;
-        for (float iters=0.0; iters < 255.0; iters += 1.0) {
+        for (float iters=0.0; iters < maxIters; iters += 1.0) {
             ${expr.toGlShaderCode()}
             x = newx;
             y = newy;
             if (x*x + y*y > 16.0) return iters;
         }
-        return 255.0;
+        return maxIters;
     }
 
     void main() {
         float xfrac = gl_FragCoord.x / width;
         float yfrac = 1.0 - (gl_FragCoord.y / height);
-
         float x = minx + xfrac*(maxx-minx);
         float y = maxy - yfrac*(maxy-miny);
         float mIters = showMandelbrot ? juliaIters(x, y, 0.0, 0.0) : 0.0;
         float jIters = showJulia ? juliaIters(jx, jy, x, y) : 0.0;
-        float red = mIters / 255.0;
-        float green = jIters / 255.0;
-        float blue = gl_FragCoord.y / height;
+        float red, green, blue, iters;
+        if (showMandelbrot && showJulia) {
+            iters = mIters;
+            float r1 = ${colorScheme.red};
+            float g1 = ${colorScheme.green};
+            float b1 = ${colorScheme.blue};
+            iters = jIters;
+            red = (2.0 * r1 + (${overlayColorScheme.red})) / 3.0;
+            green = (2.0 * g1 + (${overlayColorScheme.green})) / 3.0;
+            blue = (2.0 * b1 + (${overlayColorScheme.blue})) / 3.0;
+        }
+        else if (showMandelbrot) {
+            iters = mIters;
+            red = ${colorScheme.red};
+            green = ${colorScheme.green};
+            blue = ${colorScheme.blue};
+        }
+        else if (showJulia) {
+            iters = jIters;
+            red = ${colorScheme.red};
+            green = ${colorScheme.green};
+            blue = ${colorScheme.blue};
+        }
         gl_FragColor = vec4(red, green, blue, 1);
     }
     `;
@@ -367,9 +387,10 @@ const createShader = (gl, type, source) => {
     }
 }
 
-const createGlProgram = (gl, expr) => {
+const createGlProgram = (gl, expr, colorScheme, overlayColorScheme) => {
     const vertexShader = createShader(gl, gl.VERTEX_SHADER, vertexShaderSource);
-    const fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, generateFragmentShaderSource(expr));
+    const fragmentShader = createShader(
+        gl, gl.FRAGMENT_SHADER, generateFragmentShaderSource(expr, colorScheme, overlayColorScheme));
     const program = gl.createProgram();
     gl.attachShader(program, vertexShader);
     gl.attachShader(program, fragmentShader);
@@ -681,6 +702,52 @@ const presets = [
     },
 ];
 
+/**
+ * `red`, `green`, `blue` values are GL shader expressions which can use the following variables:
+ * iters: number of iterations of current point before escaping, or `maxIters`
+ * maxIters: maximum number of iterations
+ * xfrac: X position of current point in the viewport, from 0 to 1.
+ * yfrac: X position of current point in the viewport, from 0 to 1.
+ */
+const colorSchemes = [
+    {
+        name: 'Blue/Red',
+        red: 'iters / maxIters',
+        green: '0.0',
+        blue: '1.0 - yfrac',
+    },
+    {
+        name: 'Blue/Green',
+        red: '0.0',
+        green: 'iters / maxIters',
+        blue: '1.0 - yfrac',
+    },
+    {
+        name: 'Zebra',
+        red: '1.0 - mod(iters, 2.0)',
+        green: '1.0 - mod(iters, 2.0)',
+        blue: '1.0 - mod(iters, 2.0)',
+    },
+    {
+        name: 'ANSI',
+        red: 'mod(maxIters - iters, 8.0) >= 4.0 ? 1.0 : 0.0',
+        green: 'mod(maxIters - iters, 4.0) >= 2.0 ? 1.0 : 0.0',
+        blue: 'mod(maxIters - iters, 2.0) >= 1.0 ? 1.0 : 0.0',
+    },
+    {
+        name: 'Ice',
+        red: 'mod(maxIters - iters, 8.0) == 0.0 ? 1.0 : 0.0',
+        green: 'mod(maxIters - iters, 8.0) == 0.0 ? 1.0 : iters / maxIters',
+        blue: 'mod(maxIters - iters, 8.0) == 0.0 ? 1.0 : iters / maxIters',
+    },
+    {
+        name: 'Fire',
+        red: '1.0',
+        green: '0.64 + (0.36 * iters / maxIters)',
+        blue: 'iters / maxIters',
+    },
+];
+
 Vue.component('fract-complex-number', {
     template: '<input ref="valueField" type="text" @change="updateValue($event.target.value)" />',
     props: ['value'],
@@ -724,6 +791,9 @@ const createApp = () => new Vue({
         fractalParams: new FractalParams(),
         animation: new Animation(),
 
+        colorSchemes: colorSchemes,
+        selectedColorScheme: colorSchemes[0],
+
         isAnimating: false,
         animationEnabled: false,
 
@@ -753,7 +823,7 @@ const createApp = () => new Vue({
                 this.isAnimating = true;
                 window.setTimeout(() => this.animationTick(), 0);
             }
-            this.redrawNextTick();
+            this.redrawAndStoreState();
         },
 
         isHighDpiDisplay() {
@@ -767,7 +837,7 @@ const createApp = () => new Vue({
 
         resetViewBounds() {
             this.fractalParams.bounds = new ViewBounds(Complex.ZERO, 2);
-            this.redrawNextTick();
+            this.redrawAndStoreState();
         },
 
         mouseMovedOverCanvas(event) {
@@ -797,7 +867,7 @@ const createApp = () => new Vue({
             const frac = fractionalEventPosition(event, this.canvas);
             const delta = clamp(event.deltaY, -10, 10);
             this.fractalParams.bounds = this.fractalParams.bounds.zoomedBounds(frac, delta * 0.01);
-            this.redrawNextTick();
+            this.redrawAndStoreState();
         },
 
         mouseDownOverCanvas(event) {
@@ -831,7 +901,8 @@ const createApp = () => new Vue({
             const center = bounds.center;
             const juliaSeed = params.juliaSeed || Complex.ZERO;
 
-            const program = createGlProgram(gl, params.expression);
+            const program = createGlProgram(gl, params.expression,
+                                            this.selectedColorScheme, this.selectedColorScheme);
             gl.useProgram(program);
             gl.clearColor(0, 0, 0, 0);
             gl.clear(gl.COLOR_BUFFER_BIT);
@@ -859,11 +930,9 @@ const createApp = () => new Vue({
             this.lastDisplayedFractalParams = params;
         },
 
-        redrawNextTick() {
-            //Vue.nextTick(() => {
-                this.redraw();
-                this.storeStateInUrl();
-            //});
+        redrawAndStoreState() {
+            this.redraw();
+            this.storeStateInUrl();
         },
 
         resizeFractal() {
@@ -906,6 +975,7 @@ const createApp = () => new Vue({
                 fractalParams: this.fractalParams.toJson(),
                 animation: this.animation.toJson(),
                 animationEnabled: this.animationEnabled,
+                color: this.selectedColorScheme.name,
             };
             const url = '?' + encodeURIComponent(JSON.stringify(json));
             history.replaceState(null, '', url);
@@ -923,6 +993,10 @@ const createApp = () => new Vue({
             this.fractalParams = FractalParams.fromJson(json['fractalParams'] || {});
             this.animation = Animation.fromJson(json['animation'] || {});
             this.animationEnabled = !!json['animationEnabled'];
+            if (json['color']) {
+                this.selectedColorScheme =
+                    colorSchemes.find(s => s.name === json['color']) || colorSchemes[0];
+            }
         },
 
         updateDpi() {
