@@ -131,7 +131,7 @@
 
             <div class="control-row" v-if="fractalParams.fractalType === 'mandelbrot'">
                 <label>
-                    <input type="checkbox" v-model="overlayJulia" />
+                    <input type="checkbox" v-model="overlayJulia" @change="redrawAndStoreState()" />
                     Overlay Julia set
                 </label>
             </div>

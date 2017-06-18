@@ -711,16 +711,34 @@ const presets = [
  */
 const colorSchemes = [
     {
-        name: 'Blue/Red',
-        red: 'iters / maxIters',
-        green: '0.0',
-        blue: '1.0 - yfrac',
-    },
-    {
-        name: 'Blue/Green',
+        name: 'Aquamarine',
         red: '0.0',
         green: 'iters / maxIters',
         blue: '1.0 - yfrac',
+    },
+    {
+        name: 'Twilight',
+        red: '0.9 * (iters / maxIters)',
+        green: '0.0',
+        blue: '0.9 * (1.0 - yfrac)',
+    },
+    {
+        name: 'Fire',
+        red: '0.75 + (0.25 * (iters + (mod(maxIters - iters, 8.0) == 0.0 ? 10.0 : 0.0)) / maxIters)',
+        green: '0.13 + (0.87 * (iters + (mod(maxIters - iters, 8.0) == 0.0 ? 10.0 : 0.0)) / maxIters)',
+        blue: '0.13 - (0.13 * (iters + (mod(maxIters - iters, 8.0) == 0.0 ? 10.0 : 0.0)) / maxIters)',
+    },
+    {
+        name: 'Ice',
+        red: 'mod(maxIters - iters, 8.0) == 0.0 ? 0.9 : 0.0',
+        green: 'mod(maxIters - iters, 8.0) == 0.0 ? 0.9 : iters / maxIters',
+        blue: 'mod(maxIters - iters, 8.0) == 0.0 ? 0.9 : iters / maxIters',
+    },
+    {
+        name: 'Lightning',
+        red: 'iters == maxIters ? 0.9 : (0.5 + 0.3 * yfrac) * (0.54 + (0.46 * iters / maxIters))',
+        green: 'iters == maxIters ? 0.9 : (0.5 + 0.3 * yfrac) * (0.17 + (0.83 * iters / maxIters))',
+        blue: 'iters == maxIters ? 0.9 : (0.5 + 0.3 * yfrac) * (0.89 + (0.11 * iters / maxIters))',
     },
     {
         name: 'Zebra',
@@ -733,18 +751,6 @@ const colorSchemes = [
         red: 'mod(maxIters - iters, 8.0) >= 4.0 ? 1.0 : 0.0',
         green: 'mod(maxIters - iters, 4.0) >= 2.0 ? 1.0 : 0.0',
         blue: 'mod(maxIters - iters, 2.0) >= 1.0 ? 1.0 : 0.0',
-    },
-    {
-        name: 'Ice',
-        red: 'mod(maxIters - iters, 8.0) == 0.0 ? 1.0 : 0.0',
-        green: 'mod(maxIters - iters, 8.0) == 0.0 ? 1.0 : iters / maxIters',
-        blue: 'mod(maxIters - iters, 8.0) == 0.0 ? 1.0 : iters / maxIters',
-    },
-    {
-        name: 'Fire',
-        red: '1.0',
-        green: '0.64 + (0.36 * iters / maxIters)',
-        blue: 'iters / maxIters',
     },
 ];
 
