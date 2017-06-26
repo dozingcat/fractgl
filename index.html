@@ -31,6 +31,12 @@
         #main {
             display: flex;
         }
+        #main.fullscreen {
+            height: 100%;
+            width: 100%;
+            display: block;
+        }
+
         .controls {
             width: 300px;
             background: #aaa;
@@ -39,6 +45,13 @@
             overflow-y: auto;
             border-right: 1px solid #ccc;
         }
+        #main.fullscreen .controls {
+            position: fixed;
+            top: 0;
+            left: 0;
+            opacity: 0.7;
+        }
+
         .control-row {
             display: flex;
             min-height: 24px;
@@ -54,6 +67,7 @@
         .animation-playback {
             text-align: center;
         }
+
         .fractal-canvas {
             flex: 1;
             background: black;
@@ -63,11 +77,20 @@
         .fractal-canvas canvas {
             cursor: pointer;
         }
+        #main.fullscreen .fractal-canvas {
+            width: 100%;
+            overflow-y: hidden;
+        }
 
         .debug-info {
             color: white;
             margin: 20px 0 0 10px;
             font-size: 14px;
+        }
+        #main.fullscreen .debug-info {
+            position: fixed;
+            left: 320px;
+            bottom: 20px;
         }
     </style>
 
@@ -76,7 +99,7 @@
 </head>
 
 <body>
-    <div id="main">
+    <div id="main" :class="{fullscreen: isFullScreen}">
         <div class="controls">
             <div class="control-row">
                 <label>Preset</label>
@@ -101,6 +124,12 @@
                     <input type="checkbox" v-model="useHighDpi" @change="updateDpi()" />
                     High DPI
                 </label>
+            </div>
+
+            <div class="control-row">
+                <button @click="toggleFullScreen()">
+                    {{isFullScreen ? 'Exit full screen' : 'Enter full screen'}}
+                </button>
             </div>
 
             <div class="control-row">

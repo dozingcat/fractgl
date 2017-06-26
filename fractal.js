@@ -805,6 +805,7 @@ const createApp = () => new Vue({
 
         fractalSize: 0,
         overlayJulia: false,
+        isFullScreen: false,
 
         mouseDownFractionalPosition: null,
 
@@ -942,10 +943,19 @@ const createApp = () => new Vue({
         },
 
         resizeFractal() {
-            this.canvas.style.width = this.fractalSize + 'px';
-            this.canvas.style.height = this.fractalSize + 'px';
-            this.canvas.width = this.fractalSize * this.selectedDpiRatio;
-            this.canvas.height = this.fractalSize * this.selectedDpiRatio;
+            if (this.isFullScreen) {
+                const bounds = this.$el.getBoundingClientRect();
+                this.canvas.style.width = window.screen.width + 'px';
+                this.canvas.style.height = window.screen.height + 'px';
+                this.canvas.width = window.screen.width * this.selectedDpiRatio;
+                this.canvas.height = window.screen.height * this.selectedDpiRatio;
+            }
+            else {
+                this.canvas.style.width = this.fractalSize + 'px';
+                this.canvas.style.height = this.fractalSize + 'px';
+                this.canvas.width = this.fractalSize * this.selectedDpiRatio;
+                this.canvas.height = this.fractalSize * this.selectedDpiRatio;
+            }
             this.gl = null;
             this.redraw();
         },
@@ -1019,6 +1029,22 @@ const createApp = () => new Vue({
             } catch (ignored) {}
             this.resizeFractal();
         },
+
+        toggleFullScreen() {
+            if (this.isFullScreen) {
+                (document.exitFullscreen && document.exitFullscreen()) ||
+                (document.webkitExitFullscreen && document.webkitExitFullscreen()) ||
+                (document.mozCancelFullScreen && document.mozCancelFullScreen()) ||
+                (document.msExitFullscreen && document.msExitFullscreen());
+                this.isFullScreen = false;
+            }
+            else {
+                (this.$el.requestFullScreen ||
+                 this.$el.webkitRequestFullScreen ||
+                 this.$el.mozRequestFullScreen ||
+                 this.$el.msRequestFullScreen).bind(this.$el)();
+            }
+        },
     },
 
     mounted() {
@@ -1044,6 +1070,21 @@ const createApp = () => new Vue({
         if (!(Number.isFinite(this.fractalSize) && this.fractalSize > 0)) {
             this.fractalSize = 800;
         }
+
+        const fullScreenEvents = ['fullscreenchange', 'webkitfullscreenchange',
+                                  'mozfullscreenchange', 'msfullscreenchange'];
+        for (const event of fullScreenEvents) {
+            document.addEventListener(event, () => {
+                this.isFullScreen =
+                    !!(document.fullScreenElement ||
+                       document.webkitFullscreenElement ||
+                       document.mozFullScreenElement ||
+                       document.msFullscreenElement);
+                console.log('Got fullscreen event:', this.isFullScreen);
+                window.setTimeout(() => this.resizeFractal());
+            });
+        }
+
 
         this.resizeFractal();
     },
