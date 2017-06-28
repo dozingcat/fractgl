@@ -411,19 +411,8 @@ class ViewBounds {
     }
 
     pointAtFraction(frac) {
-        return new Complex(this.center.real + (frac.x-0.5)*2*this.radius,
-                           this.center.imag + (frac.y-0.5)*2*this.radius);
-    }
-
-    // centerFrac: center of the zoom (as ratio, so (0.8, 0.5) zooms in/out at center right).
-    // zoomRatio: new x/y range is increased/decreased by this ratio (positive zooms out).
-    zoomedBounds(centerFrac, zoomRatio) {
-        const rangeDelta = 2 * this.radius * zoomRatio;
-        const xmin = this.center.real - this.radius - rangeDelta*centerFrac.x;
-        const xmax = this.center.real + this.radius + rangeDelta*(1-centerFrac.x);
-        const ymin = this.center.imag - this.radius - rangeDelta*centerFrac.y;
-        const ymax = this.center.imag + this.radius + rangeDelta*(1-centerFrac.y);
-        return new ViewBounds(new Complex((xmin+xmax)/2, (ymin+ymax)/2), (xmax-xmin)/2);
+        return new Complex(this.center.real + frac.x * this.radius,
+                           this.center.imag + frac.y * this.radius);
     }
 }
 
@@ -553,7 +542,10 @@ class Animation {
 
 const fractionalEventPosition = (event, element) => {
     const r = element.getBoundingClientRect();
-    return {x: (event.clientX - r.left) / r.width, y: 1 - ((event.clientY - r.top) / r.height)};
+    const radius = Math.min(r.width, r.height) / 2;
+    const cx = r.left + r.width / 2;
+    const cy = r.top + r.height / 2;
+    return {x: (event.clientX - cx) / radius, y: -(event.clientY - cy) / radius};
 };
 
 const clamp = (x, min, max) => {
@@ -847,6 +839,16 @@ const createApp = () => new Vue({
             this.redrawAndStoreState();
         },
 
+        xRadiusFactor() {
+            const aspectRatio = this.canvas.width / this.canvas.height;
+            return Math.max(aspectRatio, 1);
+        },
+
+        yRadiusFactor() {
+            const aspectRatio = this.canvas.width / this.canvas.height;
+            return Math.max(1 / aspectRatio, 1);
+        },
+
         mouseMovedOverCanvas(event) {
             const updateJuliaOverlay =
                 this.fractalParams.fractalType === FractalType.MANDELBROT && this.overlayJulia;
@@ -870,10 +872,30 @@ const createApp = () => new Vue({
         },
 
         mouseWheelOverCanvas(event) {
-            // TODO: Don't mess up animation.
             const frac = fractionalEventPosition(event, this.canvas);
-            const delta = clamp(event.deltaY, -10, 10);
-            this.fractalParams.bounds = this.fractalParams.bounds.zoomedBounds(frac, delta * 0.01);
+            const xrf = this.xRadiusFactor();
+            const yrf = this.yRadiusFactor();
+            // Convert fract from [-xrf, xrf] to [0, 1]. (Same for y).
+            const xFrac = (frac.x + xrf) / (2 * xrf);
+            const yFrac = (frac.y + yrf) / (2 * yrf);
+
+            // Positive zoomFraction zooms out, negative in.
+            const zoomFraction = clamp(event.deltaY, -10, 10) * 0.01;
+            const bounds = this.fractalParams.bounds;
+
+            const radiusDelta = zoomFraction * bounds.radius;
+            const newRadius = radiusDelta + bounds.radius;
+
+            const cx = bounds.center.real;
+            const cy = bounds.center.imag;
+            // If we're zooming in/out from the right side, most of the change is on the left.
+            const xmin = cx - xrf*bounds.radius - 2*xrf*radiusDelta*xFrac;
+            const xmax = cx + xrf*bounds.radius + 2*xrf*radiusDelta*(1-xFrac);
+            const ymin = cy - yrf*bounds.radius - 2*yrf*radiusDelta*yFrac;
+            const ymax = cy + yrf*bounds.radius + 2*yrf*radiusDelta*(1-yFrac);
+
+            this.fractalParams.bounds =
+                new ViewBounds(new Complex((xmin+xmax)/2, (ymin+ymax)/2), newRadius)
             this.redrawAndStoreState();
         },
 
@@ -914,12 +936,18 @@ const createApp = () => new Vue({
             gl.clearColor(0, 0, 0, 0);
             gl.clear(gl.COLOR_BUFFER_BIT);
 
+            // FIXME: This makes the aspect ratio right, but mouse events are off because they
+            // assume a square canvas.
+            const aspectRatio = this.canvas.width / this.canvas.height;
+            const xFactor = Math.max(aspectRatio, 1);
+            const yFactor = Math.max(1 / aspectRatio, 1);
+
             gl.uniform1f(gl.getUniformLocation(program, 'width'), this.canvas.width);
             gl.uniform1f(gl.getUniformLocation(program, 'height'), this.canvas.height);
-            gl.uniform1f(gl.getUniformLocation(program, 'minx'), center.real - bounds.radius);
-            gl.uniform1f(gl.getUniformLocation(program, 'maxx'), center.real + bounds.radius);
-            gl.uniform1f(gl.getUniformLocation(program, 'miny'), center.imag - bounds.radius);
-            gl.uniform1f(gl.getUniformLocation(program, 'maxy'), center.imag + bounds.radius);
+            gl.uniform1f(gl.getUniformLocation(program, 'minx'), center.real - xFactor * bounds.radius);
+            gl.uniform1f(gl.getUniformLocation(program, 'maxx'), center.real + xFactor * bounds.radius);
+            gl.uniform1f(gl.getUniformLocation(program, 'miny'), center.imag - yFactor * bounds.radius);
+            gl.uniform1f(gl.getUniformLocation(program, 'maxy'), center.imag + yFactor * bounds.radius);
             gl.uniform1f(gl.getUniformLocation(program, 'jx'), juliaSeed.real);
             gl.uniform1f(gl.getUniformLocation(program, 'jy'), juliaSeed.imag);
             gl.uniform1i(gl.getUniformLocation(program, 'showMandelbrot'),
