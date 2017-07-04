@@ -419,14 +419,28 @@ class ViewBounds {
 class FractalParams {
     constructor() {
         this.fractalType = null;
+        this.overlayJulia = false;
         this.bounds = new ViewBounds(Complex.ZERO, 0);
         this.expression = null;
         this.juliaSeed = null;
     }
 
+    copy() {
+        const p = new FractalParams();
+        p.fractalType = this.fractalType;
+        p.overlayJulia = this.overlayJulia;
+        p.bounds = new ViewBounds();
+        p.bounds.center = this.bounds.center;
+        p.bounds.radius = this.bounds.radius;
+        p.expression = this.expression;
+        p.juliaSeed = this.juliaSeed;
+        return p;
+    }
+
     static fromJson(json) {
         const self = new FractalParams();
         self.fractalType = json['fractalType'];
+        self.overlayJulia = !!json['overlayJulia'];
         const center = json['center'];
         const radius = json['radius'];
         if (center && radius) {
@@ -445,6 +459,9 @@ class FractalParams {
         const json = {};
         if (this.fractalType) {
             json['fractalType'] = this.fractalType;
+        }
+        if (this.overlayJulia) {
+            json['overlayJulia'] = 1;
         }
         if (this.expression) {
             json['expression'] = this.expression.toJson();
@@ -467,6 +484,7 @@ class FractalParams {
         }
         const params = new FractalParams();
         params.fractalType = this.fractalType;
+        params.overlayJulia = this.overlayJulia;
         params.expression = animation.animateExpression && endParams.expression ?
             this.expression.weightedMean(endParams.expression, fraction) : this.expression;
 
@@ -540,6 +558,14 @@ class Animation {
     }
 }
 
+class Snapshot {
+    constructor() {
+        this.params = null;
+        this.colorScheme = null;
+        this.id = null;
+    }
+}
+
 const fractionalEventPosition = (event, element) => {
     const r = element.getBoundingClientRect();
     const radius = Math.min(r.width, r.height) / 2;
@@ -558,6 +584,44 @@ const weightedGeometricMean = (x1, x2, weight) =>
     Math.exp(weightedMean(Math.log(x1), Math.log(x2), weight));
 
 const roundToPlaces = (x, places) => x.toFixed(places).replace(/\.?0+$/, '');
+
+const drawFractal = (gl, fractalParams, colorScheme, altColorScheme) => {
+    const fractalType = fractalParams.fractalType;
+    const bounds = fractalParams.bounds;
+    const center = bounds.center;
+    const juliaSeed = fractalParams.juliaSeed || Complex.ZERO;
+
+    const program = createGlProgram(gl, fractalParams.expression, colorScheme, altColorScheme);
+    gl.useProgram(program);
+    gl.clearColor(0, 0, 0, 0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+
+    // FIXME: This makes the aspect ratio right, but mouse events are off because they
+    // assume a square canvas.
+    const aspectRatio = gl.canvas.width / gl.canvas.height;
+    const xFactor = Math.max(aspectRatio, 1);
+    const yFactor = Math.max(1 / aspectRatio, 1);
+
+    gl.uniform1f(gl.getUniformLocation(program, 'width'), gl.canvas.width);
+    gl.uniform1f(gl.getUniformLocation(program, 'height'), gl.canvas.height);
+    gl.uniform1f(gl.getUniformLocation(program, 'minx'), center.real - xFactor * bounds.radius);
+    gl.uniform1f(gl.getUniformLocation(program, 'maxx'), center.real + xFactor * bounds.radius);
+    gl.uniform1f(gl.getUniformLocation(program, 'miny'), center.imag - yFactor * bounds.radius);
+    gl.uniform1f(gl.getUniformLocation(program, 'maxy'), center.imag + yFactor * bounds.radius);
+    gl.uniform1f(gl.getUniformLocation(program, 'jx'), juliaSeed.real);
+    gl.uniform1f(gl.getUniformLocation(program, 'jy'), juliaSeed.imag);
+    gl.uniform1i(gl.getUniformLocation(program, 'showMandelbrot'),
+                 fractalType === FractalType.MANDELBROT ? 1 : 0);
+    gl.uniform1i(gl.getUniformLocation(program, 'showJulia'),
+                 fractalType === FractalType.JULIA || fractalParams.overlayJulia ? 1 : 0);
+
+    const positions = [-1, -1,  1, -1,  -1, 1,  1, -1,  -1, 1,  1, 1];
+    const posAttr = gl.getAttribLocation(program, 'pos');
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(positions), gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(posAttr);
+    gl.vertexAttribPointer(posAttr, 2 /* size */, gl.FLOAT, false /* normalize */, 0 /* stride */, 0 /* offset */);
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+};
 
 const presets = [
     {
@@ -692,6 +756,25 @@ const presets = [
             },
         },
     },
+    {
+        name: 'Julia z^4 twist',
+        fractalParams: {
+            fractalType: FractalType.JULIA,
+            expression: [[1, 4]],
+            center: '0',
+            radius: 1.3,
+            juliaSeed: '-0.45 + 0.47i',
+        },
+        animationEnabled: true,
+        autoplay: true,
+        animation: {
+            numFrames: 500,
+            animateJuliaSeed: true,
+            target: {
+                juliaSeed: '-0.39 + 0.47i',
+            },
+        },
+    },
 ];
 
 /**
@@ -780,6 +863,39 @@ Vue.component('fract-expression', {
     },
 });
 
+Vue.component('fract-snapshot', {
+    template: `
+      <div class="snapshot control-row">
+        <div class="snapshot-image">
+          <canvas ref="imageCanvas" width="180" height="135"></canvas>
+        </div>
+        <div class="snapshot-controls">
+          <button @click="$emit('restore', snapshot)">Restore</button>
+          <button @click="$emit('remove', snapshot)">Remove</button>
+        </div>
+      </div>
+    `,
+    props: ['snapshot'],
+    methods: {
+        restore() {
+            this.$emit();
+        },
+    },
+    mounted() {
+        const canvas = this.$refs.imageCanvas;
+        // Always use high DPI for snapshot canvas.
+        const pixelRatio = window.devicePixelRatio || 1;
+        canvas.style.width = canvas.width + 'px';
+        canvas.style.height = canvas.height + 'px';
+        canvas.width = canvas.width * pixelRatio;
+        canvas.height = canvas.height * pixelRatio;
+        const gl = canvas.getContext('webgl');
+        gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+        gl.viewport(0, 0, canvas.width, canvas.height);
+        drawFractal(gl, this.snapshot.params, this.snapshot.colorScheme, this.snapshot.colorScheme);
+    },
+});
+
 const createApp = () => new Vue({
     el: '#main',
 
@@ -796,14 +912,16 @@ const createApp = () => new Vue({
         animationEnabled: false,
 
         fractalSize: 0,
-        overlayJulia: false,
         isFullScreen: false,
+
+        snapshots: [],
+        nextSnapshotId: 1,
 
         mouseDownFractionalPosition: null,
 
         showDebugInfo: false,
-        lastDisplayedFractalParams: '',
         totalFrames: 0,
+        lastDisplayedFractalParams: null,
 
         devicePixelRatio: window.devicePixelRatio || 1,
         selectedDpiRatio: 1,
@@ -850,16 +968,16 @@ const createApp = () => new Vue({
         },
 
         mouseMovedOverCanvas(event) {
+            const params = this.fractalParams;
             const updateJuliaOverlay =
-                this.fractalParams.fractalType === FractalType.MANDELBROT && this.overlayJulia;
+                params.fractalType === FractalType.MANDELBROT && params.overlayJulia;
             if (updateJuliaOverlay || this.mouseDownFractionalPosition) {
                 if (updateJuliaOverlay) {
                     const frac = fractionalEventPosition(event, this.canvas);
-                    this.fractalParams.juliaSeed =
-                        this.displayedFractalParams().bounds.pointAtFraction(frac);
+                    params.juliaSeed = this.displayedFractalParams().bounds.pointAtFraction(frac);
                 }
                 if (this.mouseDownFractionalPosition) {
-                    const bounds = this.fractalParams.bounds;
+                    const bounds = params.bounds;
                     const pos = fractionalEventPosition(event, this.canvas);
                     const dx = 2 * bounds.radius * (pos.x - this.mouseDownFractionalPosition.x);
                     const dy = 2 * bounds.radius * (pos.y - this.mouseDownFractionalPosition.y);
@@ -916,52 +1034,14 @@ const createApp = () => new Vue({
         redraw() {
             this.totalFrames += 1;
 
-            let gl = this.gl;
-            if (!gl) {
+            if (!this.gl) {
                 this.gl = this.canvas.getContext('webgl');
-                gl = this.gl;
-                gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
-                gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
+                this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.gl.createBuffer());
+                this.gl.viewport(0, 0, this.gl.canvas.width, this.gl.canvas.height);
             }
 
             const params = this.displayedFractalParams();
-            const fractalType = params.fractalType;
-            const bounds = params.bounds;
-            const center = bounds.center;
-            const juliaSeed = params.juliaSeed || Complex.ZERO;
-
-            const program = createGlProgram(gl, params.expression,
-                                            this.selectedColorScheme, this.selectedColorScheme);
-            gl.useProgram(program);
-            gl.clearColor(0, 0, 0, 0);
-            gl.clear(gl.COLOR_BUFFER_BIT);
-
-            // FIXME: This makes the aspect ratio right, but mouse events are off because they
-            // assume a square canvas.
-            const aspectRatio = this.canvas.width / this.canvas.height;
-            const xFactor = Math.max(aspectRatio, 1);
-            const yFactor = Math.max(1 / aspectRatio, 1);
-
-            gl.uniform1f(gl.getUniformLocation(program, 'width'), this.canvas.width);
-            gl.uniform1f(gl.getUniformLocation(program, 'height'), this.canvas.height);
-            gl.uniform1f(gl.getUniformLocation(program, 'minx'), center.real - xFactor * bounds.radius);
-            gl.uniform1f(gl.getUniformLocation(program, 'maxx'), center.real + xFactor * bounds.radius);
-            gl.uniform1f(gl.getUniformLocation(program, 'miny'), center.imag - yFactor * bounds.radius);
-            gl.uniform1f(gl.getUniformLocation(program, 'maxy'), center.imag + yFactor * bounds.radius);
-            gl.uniform1f(gl.getUniformLocation(program, 'jx'), juliaSeed.real);
-            gl.uniform1f(gl.getUniformLocation(program, 'jy'), juliaSeed.imag);
-            gl.uniform1i(gl.getUniformLocation(program, 'showMandelbrot'),
-                                               fractalType === FractalType.MANDELBROT ? 1 : 0);
-            gl.uniform1i(gl.getUniformLocation(program, 'showJulia'),
-                                               fractalType === FractalType.JULIA || this.overlayJulia ? 1 : 0);
-
-            const positions = [-1, -1,  1, -1,  -1, 1,  1, -1,  -1, 1,  1, 1];
-            const posAttr = gl.getAttribLocation(program, 'pos');
-            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(positions), gl.STATIC_DRAW);
-            gl.enableVertexAttribArray(posAttr);
-            gl.vertexAttribPointer(posAttr, 2 /* size */, gl.FLOAT, false /* normalize */, 0 /* stride */, 0 /* offset */);
-            gl.drawArrays(gl.TRIANGLES, 0, 6);
-
+            drawFractal(this.gl, params, this.selectedColorScheme, this.selectedColorScheme);
             this.lastDisplayedFractalParams = params;
         },
 
@@ -1073,10 +1153,33 @@ const createApp = () => new Vue({
                  this.$el.msRequestFullScreen).bind(this.$el)();
             }
         },
+
+        saveParamsSnapshot() {
+            const snapshot = new Snapshot();
+            snapshot.params = this.displayedFractalParams().copy();
+            snapshot.colorScheme = this.selectedColorScheme;
+            snapshot.id = this.nextSnapshotId;
+            this.nextSnapshotId += 1;
+            this.snapshots.push(snapshot);
+        },
+
+        restoreSnapshot(snapshot) {
+            this.fractalParams = snapshot.params.copy();
+            this.selectedColorScheme = snapshot.colorScheme;
+            this.redraw();
+            this.storeStateInUrl();
+        },
+
+        removeSnapshot(snapshot) {
+            const index = this.snapshots.indexOf(snapshot);
+            if (index >= 0) {
+                this.snapshots.splice(index, 1);
+            }
+        },
     },
 
     mounted() {
-        this.canvas = document.querySelector('#__canvas');
+        this.canvas = this.$refs['mainCanvas'];
         let restoreError = false;
         try {
             this.restoreStateFromUrl();
@@ -1112,7 +1215,6 @@ const createApp = () => new Vue({
                 window.setTimeout(() => this.resizeFractal());
             });
         }
-
 
         this.resizeFractal();
     },

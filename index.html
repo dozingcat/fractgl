@@ -6,6 +6,7 @@
   Released under the GNU General Public License version 3.
 -->
 <head>
+    <meta charset="UTF-8">
     <script src="vue_2.3.4.min.js"></script>
     <style>
         html {
@@ -167,7 +168,7 @@
 
             <div class="control-row" v-if="fractalParams.fractalType === 'mandelbrot'">
                 <label>
-                    <input type="checkbox" v-model="overlayJulia" @change="redrawAndStoreState()" />
+                    <input type="checkbox" v-model="fractalParams.overlayJulia" @change="redrawAndStoreState()" />
                     Overlay Julia set
                 </label>
             </div>
@@ -253,10 +254,19 @@
                     Show debug info
                 </label>
             </div>
+
+            <hr />
+            <button @click="saveParamsSnapshot()">Save params</button>
+            <fract-snapshot v-for="snapshot in snapshots"
+                :snapshot="snapshot"
+                :key="snapshot.id"
+                @restore="restoreSnapshot"
+                @remove="removeSnapshot"
+            ></fract-snapshot>
         </div>
 
         <div class="fractal-canvas">
-            <canvas id="__canvas"
+            <canvas ref="mainCanvas"
                 @mousedown="mouseDownOverCanvas($event)"
                 @mouseup="mouseUpOverCanvas($event)"
                 @mousemove="mouseMovedOverCanvas($event)"
