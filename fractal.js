@@ -372,6 +372,113 @@ const generateFragmentShaderSource = (expr, colorScheme, overlayColorScheme) => 
     `;
 };
 
+// https://www.thasler.com/blog/blog/glsl-part2-emu
+const generate64BitFragmentSource = (expr, colorScheme, overlayColorScheme) => {
+    return `
+    precision highp float;
+    uniform float jxHigh;
+    uniform float jxLow;
+    uniform float jyHigh;
+    uniform float jyLow;
+    uniform float minxHigh;
+    uniform float minxLow;
+    uniform float maxxHigh;
+    uniform float maxxLow;
+    uniform float minyHigh;
+    uniform float minyLow;
+    uniform float maxyHigh;
+    uniform float maxyLow;
+    uniform float width;
+    uniform float height;
+    uniform bool showMandelbrot;
+    uniform bool showJulia;
+    const float maxIters = 255.0;
+
+    vec2 f64_add(vec2 f1, vec2 f2) {
+        float t1 = f1.x + f2.x;
+        float e = t1 - f1.x;
+        float t2 = ((f2.x - e) + (f1.x - (t1 - e))) + f1.y + f2.y;
+        float high = t1 + t2;
+        return vec2(high, t2 - (high - t1));
+    }
+
+    vec2 f64_mul(vec2 f1, vec2 f2) {
+        float cona = f1.x * 8193.;
+        float conb = f2.x * 8193.;
+        float a1 = cona - (cona - f1.x);
+        float b1 = conb - (conb - f2.x);
+        float a2 = f1.x - a1;
+        float b2 = f2.x - b1;
+        float c11 = f1.x * f2.x;
+        float c21 = a2 * b2 + (a2 * b1 + (a1 * b2 + (a1 * b1 - c11)));
+        float c2 = f1.x * f2.y + f1.y * f2.x;
+        float t1 = c11 + c2;
+        float e = t1 - c11;
+        float t2 = f1.y * f2.y + ((c2 - e) + (c11 - (t1 - e))) + c21;
+        float high = t1 + t2;
+        return vec2(high, t2 - (high - t1));
+    }
+
+    float juliaIters(vec2 cx, vec2 cy, vec2 jx, vec2 jy) {
+        vec2 x = jx;
+        vec2 y = jy;
+        for (float iters=0.0; iters < maxIters; iters += 1.0) {
+            vec2 newx = f64_add(f64_add(f64_mul(x, x), -1. * f64_mul(y, y)), cx);
+            vec2 newy = f64_add(2. * f64_mul(x, y), cy);
+            x = newx;
+            y = newy;
+            if (x.x*x.x + y.x*y.x > 16.0) return iters;
+        }
+        return maxIters;
+    }
+
+    void main() {
+        float xfrac = gl_FragCoord.x / width;
+        float yfrac = 1.0 - (gl_FragCoord.y / height);
+        vec2 deltaX = f64_add(vec2(maxxHigh, maxxLow), vec2(-minxHigh, -minxLow));
+        vec2 deltaY = f64_add(vec2(maxyHigh, maxyLow), vec2(-minyHigh, -minyLow));
+
+        vec2 x = f64_add(vec2(minxHigh, minxLow), xfrac * deltaX);
+        vec2 y = f64_add(vec2(maxyHigh, maxyLow), -yfrac * deltaY);
+
+        float mIters = showMandelbrot ? juliaIters(x, y, vec2(0.0), vec2(0.0)) : 0.0;
+        float jIters = showJulia ? juliaIters(vec2(jxHigh, jxLow), vec2(jyHigh, jyLow), x, y) : 0.0;
+        float red, green, blue, iters;
+        if (showMandelbrot && showJulia) {
+            iters = mIters;
+            float r1 = ${colorScheme.red};
+            float g1 = ${colorScheme.green};
+            float b1 = ${colorScheme.blue};
+            iters = jIters;
+            red = (2.0 * r1 + (${overlayColorScheme.red})) / 3.0;
+            green = (2.0 * g1 + (${overlayColorScheme.green})) / 3.0;
+            blue = (2.0 * b1 + (${overlayColorScheme.blue})) / 3.0;
+        }
+        else if (showMandelbrot) {
+            iters = mIters;
+            red = ${colorScheme.red};
+            green = ${colorScheme.green};
+            blue = ${colorScheme.blue};
+        }
+        else if (showJulia) {
+            iters = jIters;
+            red = ${colorScheme.red};
+            green = ${colorScheme.green};
+            blue = ${colorScheme.blue};
+        }
+        gl_FragColor = vec4(red, green, blue, 1);
+    }
+    `;
+};
+
+const splitDoubleToFloats = (x) => {
+    const f = new Float32Array(2);
+    f[0] = x;
+    f[1] = x - f[0];
+    return f;
+};
+
+
 const createShader = (gl, type, source) => {
     const shader = gl.createShader(type);
     gl.shaderSource(shader, source);
@@ -387,10 +494,11 @@ const createShader = (gl, type, source) => {
     }
 }
 
-const createGlProgram = (gl, expr, colorScheme, overlayColorScheme) => {
+const createGlProgram = (gl, expr, colorScheme, overlayColorScheme, use64Bit=false) => {
     const vertexShader = createShader(gl, gl.VERTEX_SHADER, vertexShaderSource);
-    const fragmentShader = createShader(
-        gl, gl.FRAGMENT_SHADER, generateFragmentShaderSource(expr, colorScheme, overlayColorScheme));
+    const fragmentShader = createShader(gl, gl.FRAGMENT_SHADER,
+        use64Bit ? generate64BitFragmentSource(expr, colorScheme, overlayColorScheme)
+                 : generateFragmentShaderSource(expr, colorScheme, overlayColorScheme));
     const program = gl.createProgram();
     gl.attachShader(program, vertexShader);
     gl.attachShader(program, fragmentShader);
@@ -585,35 +693,48 @@ const weightedGeometricMean = (x1, x2, weight) =>
 
 const roundToPlaces = (x, places) => x.toFixed(places).replace(/\.?0+$/, '');
 
-const drawFractal = (gl, fractalParams, colorScheme, altColorScheme) => {
+const drawFractal = (gl, fractalParams, colorScheme, altColorScheme, use64Bit=false) => {
     const fractalType = fractalParams.fractalType;
     const bounds = fractalParams.bounds;
     const center = bounds.center;
     const juliaSeed = fractalParams.juliaSeed || Complex.ZERO;
 
-    const program = createGlProgram(gl, fractalParams.expression, colorScheme, altColorScheme);
+    const program = createGlProgram(gl, fractalParams.expression, colorScheme, altColorScheme, use64Bit);
     gl.useProgram(program);
     gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT);
 
-    // FIXME: This makes the aspect ratio right, but mouse events are off because they
-    // assume a square canvas.
     const aspectRatio = gl.canvas.width / gl.canvas.height;
     const xFactor = Math.max(aspectRatio, 1);
     const yFactor = Math.max(1 / aspectRatio, 1);
 
     gl.uniform1f(gl.getUniformLocation(program, 'width'), gl.canvas.width);
     gl.uniform1f(gl.getUniformLocation(program, 'height'), gl.canvas.height);
-    gl.uniform1f(gl.getUniformLocation(program, 'minx'), center.real - xFactor * bounds.radius);
-    gl.uniform1f(gl.getUniformLocation(program, 'maxx'), center.real + xFactor * bounds.radius);
-    gl.uniform1f(gl.getUniformLocation(program, 'miny'), center.imag - yFactor * bounds.radius);
-    gl.uniform1f(gl.getUniformLocation(program, 'maxy'), center.imag + yFactor * bounds.radius);
-    gl.uniform1f(gl.getUniformLocation(program, 'jx'), juliaSeed.real);
-    gl.uniform1f(gl.getUniformLocation(program, 'jy'), juliaSeed.imag);
     gl.uniform1i(gl.getUniformLocation(program, 'showMandelbrot'),
                  fractalType === FractalType.MANDELBROT ? 1 : 0);
     gl.uniform1i(gl.getUniformLocation(program, 'showJulia'),
                  fractalType === FractalType.JULIA || fractalParams.overlayJulia ? 1 : 0);
+    if (use64Bit) {
+        const set64BitValues = (highVar, lowVar, val) => {
+            const f = splitDoubleToFloats(val);
+            gl.uniform1f(gl.getUniformLocation(program, highVar), f[0]);
+            gl.uniform1f(gl.getUniformLocation(program, lowVar), f[1]);
+        }
+        set64BitValues('minxHigh', 'minxLow', center.real - xFactor * bounds.radius);
+        set64BitValues('maxxHigh', 'maxxLow', center.real + xFactor * bounds.radius);
+        set64BitValues('minyHigh', 'minyLow', center.imag - yFactor * bounds.radius);
+        set64BitValues('maxyHigh', 'maxyLow', center.imag + yFactor * bounds.radius);
+        set64BitValues('jxHigh', 'jxLow', juliaSeed.real);
+        set64BitValues('jyHigh', 'jyLow', juliaSeed.imag);
+    }
+    else {
+        gl.uniform1f(gl.getUniformLocation(program, 'minx'), center.real - xFactor * bounds.radius);
+        gl.uniform1f(gl.getUniformLocation(program, 'maxx'), center.real + xFactor * bounds.radius);
+        gl.uniform1f(gl.getUniformLocation(program, 'miny'), center.imag - yFactor * bounds.radius);
+        gl.uniform1f(gl.getUniformLocation(program, 'maxy'), center.imag + yFactor * bounds.radius);
+        gl.uniform1f(gl.getUniformLocation(program, 'jx'), juliaSeed.real);
+        gl.uniform1f(gl.getUniformLocation(program, 'jy'), juliaSeed.imag);
+    }
 
     const positions = [-1, -1,  1, -1,  -1, 1,  1, -1,  -1, 1,  1, 1];
     const posAttr = gl.getAttribLocation(program, 'pos');
@@ -840,7 +961,7 @@ Vue.component('fract-complex-number', {
     },
     watch: {
         value() {
-            const formattedValue = (this.value) ? this.value.toRoundedString(8) : '';
+            const formattedValue = (this.value) ? this.value.toRoundedString(16) : '';
             this.$refs.valueField.value = formattedValue;
         },
     },
@@ -892,7 +1013,7 @@ Vue.component('fract-snapshot', {
         const gl = canvas.getContext('webgl');
         gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
         gl.viewport(0, 0, canvas.width, canvas.height);
-        drawFractal(gl, this.snapshot.params, this.snapshot.colorScheme, this.snapshot.colorScheme);
+        drawFractal(gl, this.snapshot.params, this.snapshot.colorScheme, this.snapshot.colorScheme, this.use64Bit);
     },
 });
 
@@ -926,6 +1047,7 @@ const createApp = () => new Vue({
         devicePixelRatio: window.devicePixelRatio || 1,
         selectedDpiRatio: 1,
         useHighDpi: false,
+        use64Bit: false,
 
         canvas: null,
         gl: null,
@@ -979,8 +1101,8 @@ const createApp = () => new Vue({
                 if (this.mouseDownFractionalPosition) {
                     const bounds = params.bounds;
                     const pos = fractionalEventPosition(event, this.canvas);
-                    const dx = 2 * bounds.radius * (pos.x - this.mouseDownFractionalPosition.x);
-                    const dy = 2 * bounds.radius * (pos.y - this.mouseDownFractionalPosition.y);
+                    const dx = bounds.radius * (pos.x - this.mouseDownFractionalPosition.x);
+                    const dy = bounds.radius * (pos.y - this.mouseDownFractionalPosition.y);
                     this.fractalParams.bounds.center = new Complex(
                         bounds.center.real - dx, bounds.center.imag - dy);
                     this.mouseDownFractionalPosition = pos;
@@ -1041,7 +1163,7 @@ const createApp = () => new Vue({
             }
 
             const params = this.displayedFractalParams();
-            drawFractal(this.gl, params, this.selectedColorScheme, this.selectedColorScheme);
+            drawFractal(this.gl, params, this.selectedColorScheme, this.selectedColorScheme, this.use64Bit);
             this.lastDisplayedFractalParams = params;
         },
 
@@ -1100,6 +1222,7 @@ const createApp = () => new Vue({
                 animation: this.animation.toJson(),
                 animationEnabled: this.animationEnabled,
                 color: this.selectedColorScheme.name,
+                use64Bit: this.use64Bit,
             };
             const url = '?' + encodeURIComponent(JSON.stringify(json));
             history.replaceState(null, '', url);
@@ -1117,6 +1240,7 @@ const createApp = () => new Vue({
             this.fractalParams = FractalParams.fromJson(json['fractalParams'] || {});
             this.animation = Animation.fromJson(json['animation'] || {});
             this.animationEnabled = !!json['animationEnabled'];
+            this.use64Bit = !!json['use64Bit'];
             if (json['color']) {
                 this.selectedColorScheme =
                     colorSchemes.find(s => s.name === json['color']) || colorSchemes[0];

@@ -135,6 +135,13 @@
             </div>
 
             <div class="control-row">
+                <label>
+                    <input type="checkbox" v-model="use64Bit" @change="redrawAndStoreState()">
+                    64-bit float
+                </label>
+            </div>
+
+            <div class="control-row">
                 <button @click="toggleFullScreen()">
                     {{isFullScreen ? 'Exit full screen' : 'Enter full screen'}}
                 </button>
