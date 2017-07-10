@@ -135,13 +135,6 @@
             </div>
 
             <div class="control-row">
-                <label>
-                    <input type="checkbox" v-model="use64Bit" @change="redrawAndStoreState()">
-                    64-bit float
-                </label>
-            </div>
-
-            <div class="control-row">
                 <button @click="toggleFullScreen()">
                     {{isFullScreen ? 'Exit full screen' : 'Enter full screen'}}
                 </button>
@@ -165,6 +158,12 @@
                 <label>Radius</label>
                 <input type="number" step="any" class="full-width" @change="redrawAndStoreState()"
                     v-model.number.lazy="fractalParams.bounds.radius" />
+            </div>
+
+            <div class="control-row">
+                <label>Max iterations</label>
+                <input type="number" step="any" class="full-width" @change="redrawAndStoreState()"
+                    v-model.number.lazy="fractalParams.maxIters" />
             </div>
 
             <div class="control-row">

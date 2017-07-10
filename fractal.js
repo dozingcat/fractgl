@@ -136,12 +136,21 @@ class Expression {
         return Expression.fromArray(JSON.parse(s));
     }
 
+    useIntegerPowerFastPath() {
+        return this.terms.every(t =>
+            t.coefficient.isRealOnly() && t.power.isRealNonnegativeInteger() && t.power <= 8);
+    }
+
+    canUse64BitFloats() {
+        return this.terms.every(
+            t => t.coefficient.isRealOnly() && t.power.isRealNonnegativeInteger());
+    }
+
     toGlShaderCode(xVar='x', yVar='y', newXVar='newx', newYVar='newy', cxVar='cx', cyVar='cy') {
         // For integer powers we only need multiplications. Except that's slower than the general
         // approach for large powers because of the number of factors. Caching intermediate powers
         // might help (e.g. 'float x2=x*x; float x3=x2*x; ...').
-        if (this.terms.every(t =>
-                t.coefficient.isRealOnly() && t.power.isRealNonnegativeInteger() && t.power <= 8)) {
+        if (this.useIntegerPowerFastPath()) {
             const integerPoly = this.terms.map(t => [t.coefficient.real, t.power.real]);
             const [realParts, imagParts] = expandIntegerPolynomial(integerPoly);
             return `
@@ -198,6 +207,59 @@ class Expression {
             float ${newXVar} = ${sumOfExpressions(xTerms)} + ${cxVar};
             float ${newYVar} = ${sumOfExpressions(yTerms)} + ${cyVar};
         `;
+    }
+
+    toF64GlShaderCode(xVar='x', yVar='y', newXVar='newx', newYVar='newy', cxVar='cx', cyVar='cy') {
+        const maxPower = Math.max.apply(null, this.terms.map(t => t.power.real));
+        const integerPoly = this.terms.map(t => [t.coefficient.real, t.power.real]);
+        const [realParts, imagParts] = expandIntegerPolynomial(integerPoly);
+        // Create temp vars for all x and y powers.
+        const codeLines = [];
+        if (maxPower >= 2) {
+            codeLines.push(`vec2 _x2 = f64_mul(${xVar}, ${xVar});`);
+            codeLines.push(`vec2 _y2 = f64_mul(${yVar}, ${yVar});`);
+            for (let p=3; p<=maxPower; p++) {
+                codeLines.push(`vec2 _x${p} = f64_mul(_x${p-1}, x);`);
+                codeLines.push(`vec2 _y${p} = f64_mul(_y${p-1}, y);`);
+            }
+        }
+
+        const makeTerm = ([coeff, xPower, yPower]) => {
+            if (coeff === 0) {
+                // 0*anything = 0
+                return `vec2(0.)`;
+            }
+            if (xPower === 0 && yPower === 0) {
+                // a * x^0 * y^0 = a
+                return `vec2(${numberWithDecimalPoint(coeff)})`;
+            }
+            const coeffPrefix = (coeff === 1) ? '' : `${numberWithDecimalPoint(coeff)} * `;
+            const xPowerVar = (xPower <= 1) ? xVar : `_x${xPower}`;
+            const yPowerVar = (yPower <= 1) ? yVar : `_y${yPower}`;
+            if (xPower === 0) {
+                // a * y^n
+                return `${coeffPrefix}${yPowerVar}`;
+            }
+            else if (yPower === 0) {
+                // a * x^n
+                return `${coeffPrefix}${xPowerVar}`;
+            }
+            else {
+                // a * x^n * y^n
+                return `${coeffPrefix}f64_mul(${xPowerVar}, ${yPowerVar})`;
+            }
+        }
+
+        codeLines.push(`vec2 ${newXVar} = ${cxVar};`);
+        for (const part of realParts) {
+            codeLines.push(`${newXVar} = f64_add(${newXVar}, ${makeTerm(part)});`);
+        }
+        codeLines.push(`vec2 ${newYVar} = ${cyVar};`);
+        for (const part of imagParts) {
+            codeLines.push(`${newYVar} = f64_add(${newYVar}, ${makeTerm(part)});`);
+        }
+
+        return codeLines.join('\n');
     }
 
     weightedMean(other, weight) {
@@ -310,7 +372,7 @@ void main() {
 }
 `;
 
-const generateFragmentShaderSource = (expr, colorScheme, overlayColorScheme) => {
+const generateFragmentShaderSource = (expr, colorScheme, overlayColorScheme, maxIters) => {
     return `
     precision highp float;
     uniform float jx;
@@ -323,7 +385,7 @@ const generateFragmentShaderSource = (expr, colorScheme, overlayColorScheme) => 
     uniform float height;
     uniform bool showMandelbrot;
     uniform bool showJulia;
-    const float maxIters = 255.0;
+    const float maxIters =  ${numberWithDecimalPoint(maxIters)};
 
     float juliaIters(float cx, float cy, float jx, float jy) {
         float x = jx;
@@ -373,7 +435,7 @@ const generateFragmentShaderSource = (expr, colorScheme, overlayColorScheme) => 
 };
 
 // https://www.thasler.com/blog/blog/glsl-part2-emu
-const generate64BitFragmentSource = (expr, colorScheme, overlayColorScheme) => {
+const generate64BitFragmentSource = (expr, colorScheme, overlayColorScheme, maxIters) => {
     return `
     precision highp float;
     uniform float jxHigh;
@@ -392,7 +454,7 @@ const generate64BitFragmentSource = (expr, colorScheme, overlayColorScheme) => {
     uniform float height;
     uniform bool showMandelbrot;
     uniform bool showJulia;
-    const float maxIters = 255.0;
+    const float maxIters = ${numberWithDecimalPoint(maxIters)};
 
     vec2 f64_add(vec2 f1, vec2 f2) {
         float t1 = f1.x + f2.x;
@@ -423,8 +485,7 @@ const generate64BitFragmentSource = (expr, colorScheme, overlayColorScheme) => {
         vec2 x = jx;
         vec2 y = jy;
         for (float iters=0.0; iters < maxIters; iters += 1.0) {
-            vec2 newx = f64_add(f64_add(f64_mul(x, x), -1. * f64_mul(y, y)), cx);
-            vec2 newy = f64_add(2. * f64_mul(x, y), cy);
+            ${expr.toF64GlShaderCode()}
             x = newx;
             y = newy;
             if (x.x*x.x + y.x*y.x > 16.0) return iters;
@@ -494,11 +555,11 @@ const createShader = (gl, type, source) => {
     }
 }
 
-const createGlProgram = (gl, expr, colorScheme, overlayColorScheme, use64Bit=false) => {
+const createGlProgram = (gl, expr, colorScheme, overlayColorScheme, maxIters=255, use64Bit=false) => {
     const vertexShader = createShader(gl, gl.VERTEX_SHADER, vertexShaderSource);
     const fragmentShader = createShader(gl, gl.FRAGMENT_SHADER,
-        use64Bit ? generate64BitFragmentSource(expr, colorScheme, overlayColorScheme)
-                 : generateFragmentShaderSource(expr, colorScheme, overlayColorScheme));
+        use64Bit ? generate64BitFragmentSource(expr, colorScheme, overlayColorScheme, maxIters)
+                 : generateFragmentShaderSource(expr, colorScheme, overlayColorScheme, maxIters));
     const program = gl.createProgram();
     gl.attachShader(program, vertexShader);
     gl.attachShader(program, fragmentShader);
@@ -531,6 +592,8 @@ class FractalParams {
         this.bounds = new ViewBounds(Complex.ZERO, 0);
         this.expression = null;
         this.juliaSeed = null;
+        this.maxIters = 255;
+        this.use64Bit = false;
     }
 
     copy() {
@@ -542,6 +605,8 @@ class FractalParams {
         p.bounds.radius = this.bounds.radius;
         p.expression = this.expression;
         p.juliaSeed = this.juliaSeed;
+        p.maxIters = this.maxIters;
+        p.use64Bit = this.use64Bit;
         return p;
     }
 
@@ -549,6 +614,8 @@ class FractalParams {
         const self = new FractalParams();
         self.fractalType = json['fractalType'];
         self.overlayJulia = !!json['overlayJulia'];
+        self.maxIters = json['maxIters'] || 255;
+        self.use64Bit = !!json['use64Bit'];
         const center = json['center'];
         const radius = json['radius'];
         if (center && radius) {
@@ -581,6 +648,12 @@ class FractalParams {
         if (this.juliaSeed) {
             json['juliaSeed'] = this.juliaSeed.toString();
         }
+        if (this.maxIters) {
+            json['maxIters'] = this.maxIters;
+        }
+        if (this.use64Bit) {
+            json['use64Bit'] = 1;
+        }
         return json;
     }
 
@@ -593,6 +666,8 @@ class FractalParams {
         const params = new FractalParams();
         params.fractalType = this.fractalType;
         params.overlayJulia = this.overlayJulia;
+        params.maxIters = this.maxIters;
+        params.use64Bit = this.use64Bit;
         params.expression = animation.animateExpression && endParams.expression ?
             this.expression.weightedMean(endParams.expression, fraction) : this.expression;
 
@@ -693,13 +768,18 @@ const weightedGeometricMean = (x1, x2, weight) =>
 
 const roundToPlaces = (x, places) => x.toFixed(places).replace(/\.?0+$/, '');
 
-const drawFractal = (gl, fractalParams, colorScheme, altColorScheme, use64Bit=false) => {
+const drawFractal = (gl, fractalParams, colorScheme, altColorScheme) => {
     const fractalType = fractalParams.fractalType;
     const bounds = fractalParams.bounds;
     const center = bounds.center;
     const juliaSeed = fractalParams.juliaSeed || Complex.ZERO;
 
-    const program = createGlProgram(gl, fractalParams.expression, colorScheme, altColorScheme, use64Bit);
+    const pixelIncr = 2 * bounds.radius / Math.min(gl.canvas.width, gl.canvas.height);
+    const use64Bit = (fractalParams.expression.canUse64BitFloats() && pixelIncr < 5e-8);
+    console.log(use64Bit, pixelIncr);
+
+    const program = createGlProgram(gl, fractalParams.expression, colorScheme, altColorScheme,
+                                    fractalParams.maxIters, use64Bit);
     gl.useProgram(program);
     gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT);
@@ -789,7 +869,7 @@ const presets = [
             fractalType: FractalType.MANDELBROT,
             expression: [[1, 2]],
             center: '-0.5',
-            radius: 1.25,
+            radius: 1.5,
         },
         animationEnabled: true,
         autoplay: true,
@@ -799,6 +879,27 @@ const presets = [
             target: {
                 center: '-0.74635896 + 0.09853025i',
                 radius: 0.00005,
+            },
+        },
+    },
+    {
+        name: '1e12 zoom',
+        fractalParams: {
+            fractalType: FractalType.MANDELBROT,
+            expression: [[1, 2]],
+            center: '-0.5',
+            radius: 1.5,
+            maxIters: 500,
+            use64Bit: true,
+        },
+        animationEnabled: true,
+        autoplay: true,
+        animation: {
+            numFrames: 1000,
+            animateBounds: true,
+            target: {
+                center: '-0.8577248987863955 + 0.24031942994105096i',
+                radius: 1.5e-12,
             },
         },
     },
@@ -920,9 +1021,9 @@ const colorSchemes = [
     },
     {
         name: 'Fire',
-        red: '0.75 + (0.25 * (iters + (mod(maxIters - iters, 8.0) == 0.0 ? 10.0 : 0.0)) / maxIters)',
-        green: '0.13 + (0.87 * (iters + (mod(maxIters - iters, 8.0) == 0.0 ? 10.0 : 0.0)) / maxIters)',
-        blue: '0.13 - (0.13 * (iters + (mod(maxIters - iters, 8.0) == 0.0 ? 10.0 : 0.0)) / maxIters)',
+        red: '0.75 + ((0.25 * iters / maxIters) + (mod(maxIters - iters, 8.0) == 0.0 ? 0.05 : 0.))',
+        green: '0.13 + ((0.87 * iters / maxIters) + (mod(maxIters - iters, 8.0) == 0.0 ? 0.05 : 0.))',
+        blue: '0.13 - ((0.13 * iters / maxIters) + (mod(maxIters - iters, 8.0) == 0.0 ? 0.05 : 0.))',
     },
     {
         name: 'Ice',
@@ -1013,7 +1114,7 @@ Vue.component('fract-snapshot', {
         const gl = canvas.getContext('webgl');
         gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
         gl.viewport(0, 0, canvas.width, canvas.height);
-        drawFractal(gl, this.snapshot.params, this.snapshot.colorScheme, this.snapshot.colorScheme, this.use64Bit);
+        drawFractal(gl, this.snapshot.params, this.snapshot.colorScheme, this.snapshot.colorScheme);
     },
 });
 
@@ -1047,7 +1148,6 @@ const createApp = () => new Vue({
         devicePixelRatio: window.devicePixelRatio || 1,
         selectedDpiRatio: 1,
         useHighDpi: false,
-        use64Bit: false,
 
         canvas: null,
         gl: null,
@@ -1163,7 +1263,7 @@ const createApp = () => new Vue({
             }
 
             const params = this.displayedFractalParams();
-            drawFractal(this.gl, params, this.selectedColorScheme, this.selectedColorScheme, this.use64Bit);
+            drawFractal(this.gl, params, this.selectedColorScheme, this.selectedColorScheme);
             this.lastDisplayedFractalParams = params;
         },
 
@@ -1222,7 +1322,6 @@ const createApp = () => new Vue({
                 animation: this.animation.toJson(),
                 animationEnabled: this.animationEnabled,
                 color: this.selectedColorScheme.name,
-                use64Bit: this.use64Bit,
             };
             const url = '?' + encodeURIComponent(JSON.stringify(json));
             history.replaceState(null, '', url);
@@ -1240,7 +1339,6 @@ const createApp = () => new Vue({
             this.fractalParams = FractalParams.fromJson(json['fractalParams'] || {});
             this.animation = Animation.fromJson(json['animation'] || {});
             this.animationEnabled = !!json['animationEnabled'];
-            this.use64Bit = !!json['use64Bit'];
             if (json['color']) {
                 this.selectedColorScheme =
                     colorSchemes.find(s => s.name === json['color']) || colorSchemes[0];
