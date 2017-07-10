@@ -161,6 +161,12 @@
             </div>
 
             <div class="control-row">
+                <label>Max iterations</label>
+                <input type="number" step="any" class="full-width" @change="redrawAndStoreState()"
+                    v-model.number.lazy="fractalParams.maxIters" />
+            </div>
+
+            <div class="control-row">
                 <label>Function</label>
                 <fract-expression class="full-width" v-model="fractalParams.expression"
                     @input="redrawAndStoreState()"></fract-expression>
