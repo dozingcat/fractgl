@@ -158,10 +158,10 @@ class Expression {
                 float ${newYVar} = ${integerPowersToGlExpr(imagParts)} + ${cyVar};
             `;
         }
-        // ln(x+yi) = s + ti
+        // ln(x+yi) = s + ti. atan(0, 0) causes failures in some browsers so have to check for it.
         const localVarCode = [
             'float _s = 0.5*log(x*x + y*y);',
-            'float _t = atan(y, x);'
+            'float _t = (x == 0.0 && y == 0.0) ? 0.0 : atan(y, x);'
         ];
 
         const xTerms = [];
