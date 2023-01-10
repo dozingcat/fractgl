@@ -159,6 +159,9 @@ class Expression {
             `;
         }
         // ln(x+yi) = s + ti. atan(0, 0) causes failures in some browsers so have to check for it.
+        // Also if x==y==0 the log of 0 can cause problems with complex exponents; as a partial
+        // workaround we set the initial value for Mandelbrot iterations (via juliaIters arguments)
+        // to be (cx, cy) rather than (0, 0).
         const localVarCode = [
             'float _s = 0.5*log(x*x + y*y);',
             'float _t = (x == 0.0 && y == 0.0) ? 0.0 : atan(y, x);'
@@ -404,7 +407,7 @@ const generateFragmentShaderSource = (expr, colorScheme, overlayColorScheme, max
         float yfrac = 1.0 - (gl_FragCoord.y / height);
         float x = minx + xfrac*(maxx-minx);
         float y = maxy - yfrac*(maxy-miny);
-        float mIters = showMandelbrot ? juliaIters(x, y, 0.0, 0.0) : 0.0;
+        float mIters = showMandelbrot ? juliaIters(x, y, x, y) : 0.0;
         float jIters = showJulia ? juliaIters(jx, jy, x, y) : 0.0;
         float red, green, blue, iters;
         if (showMandelbrot && showJulia) {
@@ -434,7 +437,11 @@ const generateFragmentShaderSource = (expr, colorScheme, overlayColorScheme, max
     `;
 };
 
-// https://www.thasler.com/blog/blog/glsl-part2-emu
+// Attempts to emulate 64-bit floats with a vector of 2 32-bit values.
+// Based on https://blog.cyclemap.link/2011-06-09-glsl-part2-emu/
+// This doesn't work reliably on all hardware; apparently some drivers try to optimize
+// the operations which causes the error terms to not be computed correctly.
+// Sometimes software WebGL implementations are more accurate (and slower).
 const generate64BitFragmentSource = (expr, colorScheme, overlayColorScheme, maxIters) => {
     return `
     precision highp float;
@@ -502,7 +509,7 @@ const generate64BitFragmentSource = (expr, colorScheme, overlayColorScheme, maxI
         vec2 x = f64_add(vec2(minxHigh, minxLow), xfrac * deltaX);
         vec2 y = f64_add(vec2(maxyHigh, maxyLow), -yfrac * deltaY);
 
-        float mIters = showMandelbrot ? juliaIters(x, y, vec2(0.0), vec2(0.0)) : 0.0;
+        float mIters = showMandelbrot ? juliaIters(x, y, x, y) : 0.0;
         float jIters = showJulia ? juliaIters(vec2(jxHigh, jxLow), vec2(jyHigh, jyLow), x, y) : 0.0;
         float red, green, blue, iters;
         if (showMandelbrot && showJulia) {
